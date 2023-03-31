@@ -29,8 +29,6 @@ const mostBlogs = (blogs) => {
     blogs.forEach(blog => {
         const names = count.map(x => x.author)
 
-        console.log(names)
-
         if (names.indexOf(blog.author) != -1) {
             count[names.indexOf(blog.author)].blogs += 1
         } else {
