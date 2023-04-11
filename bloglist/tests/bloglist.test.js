@@ -3,16 +3,37 @@ const supertest = require('supertest')
 const helper = require('./test_helper')
 const app = require('../app')
 const api = supertest(app)
+const bcrypt = require('bcrypt')
+const jwt = require('jsonwebtoken')
 
 const Blog = require('../models/blog')
+const User = require('../models/user')
+
+let token = null
+let user = null
+
+beforeAll(async () => {
+    await User.deleteMany({})
+    user = await helper.user.save()
+    token = jwt.sign({ username: helper.user.username, id: user.id }, process.env.SECRET)
+})
 
 beforeEach(async () => {
     await Blog.deleteMany({})
+
+    const lastBlog = Blog({
+        title: "eemis",
+        author: "Eemi",
+        url: "eemis.com",
+        user: user
+    })
 
     const blogObjects = helper.initialBlogs
         .map(blog => new Blog(blog))
     const promiseArray = blogObjects.map(blog => blog.save())
     await Promise.all(promiseArray)
+
+    await lastBlog.save()
 })
 
 describe('when there is initially some blogs saved', () => {
@@ -27,7 +48,7 @@ describe('when there is initially some blogs saved', () => {
     test('all blogs are returned', async () => {
         const response = await api.get('/api/blogs')
 
-        expect(response.body).toHaveLength(helper.initialBlogs.length)
+        expect(response.body).toHaveLength(helper.initialBlogs.length + 1)
     })
 
     test('a specific blog is within the returned blogs', async () => {
@@ -72,13 +93,14 @@ describe('addition of a new blog', () => {
 
         await api
             .post('/api/blogs')
+            .set('Authorization', `bearer ${token}`)
             .send(newBlog)
             .expect(201)
             .expect('Content-Type', /application\/json/)
 
 
         const blogsAtEnd = await helper.blogsInDb()
-        expect(blogsAtEnd).toHaveLength(helper.initialBlogs.length + 1)
+        expect(blogsAtEnd).toHaveLength(helper.initialBlogs.length + 2)
 
         const authors = blogsAtEnd.map(n => n.author)
         expect(authors).toContain('test')
@@ -93,6 +115,7 @@ describe('addition of a new blog', () => {
 
         await api
             .post('/api/blogs')
+            .set('Authorization', `bearer ${token}`)
             .send(newBlog)
 
         const blogsAtEnd = await helper.blogsInDb()
@@ -114,29 +137,45 @@ describe('addition of a new blog', () => {
 
         await api
             .post('/api/blogs')
+            .set('Authorization', `bearer ${token}`)
             .send(missingTitle)
             .expect(400)
 
         await api
             .post('/api/blogs')
+            .set('Authorization', `bearer ${token}`)
             .send(missingUrl)
             .expect(400)
+    })
+
+    test('fails with status 401 without a token', async () => {
+        const newBlog = {
+            title: 'last test',
+            author: 'fs',
+            url: 'https://www.test.com/'
+        }
+
+        await api
+            .post('/api/blogs')
+            .send(newBlog)
+            .expect(401)
     })
 })
 
 describe('deletion of a blog', () => {
     test('succeeds with status code 204 if id is valid', async () => {
         const blogsAtStart = await helper.blogsInDb()
-        const blogToDelete = blogsAtStart[0]
+        const blogToDelete = blogsAtStart[blogsAtStart.length - 1]
 
         await api
             .delete(`/api/blogs/${blogToDelete.id}`)
+            .set('Authorization', `bearer ${token}`)
             .expect(204)
 
         const blogsAtEnd = await helper.blogsInDb()
 
         expect(blogsAtEnd).toHaveLength(
-            helper.initialBlogs.length - 1
+            helper.initialBlogs.length
         )
 
         const authors = blogsAtEnd.map(b => b.author)
@@ -149,31 +188,18 @@ describe('updating of a blog', () => {
     test('add one like to a post', async () => {
         const blogsAtStart = await helper.blogsInDb()
 
-        console.log(blogsAtStart)
-
-        const { title, author, url, likes, id } = blogsAtStart[0]
-
-        const updated = {
-            title,
-            author,
-            url,
-            likes: likes + 1,
-            id
-        }
+        const toUpdate = blogsAtStart[0]
 
         await api
-            .put(`/api/blogs/${id}`)
-            .send(updated)
+            .put(`/api/blogs/${toUpdate.id}`)
+            .send({ likes: toUpdate.likes + 1 })
+            .expect(200)
 
         const blogsAtEnd = await helper.blogsInDb()
 
-        console.log(blogsAtEnd)
-
         const blogToView = blogsAtEnd[0]
 
-        expect(blogToView.likes).toBe(
-            helper.initialBlogs[0].likes + 1
-        )
+        expect(blogToView.likes).toBe(toUpdate.likes + 1)
     })
 })
 
